@@ -1,0 +1,634 @@
+---
+title: "UK transport"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+---
+
+# **Moodle assignment**
+
+Well structured for different types of public transport in the UK, available as csv. The task is to extract individual networks for each city with at least 50k inhabitants (see [here for data](https://worldpopulationreview.com/countries/cities/united-kingdom) about UK population by city) and, for each city, create two files: one for nodes (nodeID,nodeLabel,latitude,longitude,mode,year) and one for edges list (nodeID_from,nodeID_to,mode,line,year)
+
+# Preliminary: import library and data
+
+```{r}
+library(sf)
+library(ggplot2)
+library(cowplot)
+library(data.table)
+library(dplyr)
+library(RColorBrewer)
+library(gridExtra)
+library(reshape2)
+library(tidyr)
+```
+
+```{r}
+counties_data <- st_read("Data base/Counties boundaries/CTYUA_DEC_2023_UK_BUC.shp")
+ttwa_data <- st_read("Data base/Travel to work areas/TTWA_2011_UK_BUC_500.shp")
+population_data <- fread("Data base/population data.csv")
+population_data_cities <- fread("Data base/country-cities-data.csv")
+
+nodes <- fread("Data base/nodes.csv")
+edges <- fread("Data base/edges.csv")
+layer_mapping <- fread("Data base/layers.csv")
+```
+
+# Population distribution across UK
+
+First of all I need to load population data. I decided to divide UK into counties using the data set of [ONS](https://geoportal.statistics.gov.uk/datasets/4832bb99c4844971b111739be44f1bc5_0/explore?location=52.747048%2C0.003210%2C7.76&showTable=true){.uri} to get the respectively population number, the population data are available only for counties.
+
+I will then use [travel-to-work-areas](https://en.wikipedia.org/wiki/Travel_to_work_area) to study the transport network.
+
+First of all get an idea of the division
+
+## Geographic division: counties vs travel-to-work-area
+
+```{r}
+# Create plots
+p1 <- ggplot(data = counties_data) +
+  geom_sf(fill = 'cyan', color = 'black') +  # Fill color is cyan and border color is black
+  labs(title = "Counties in the UK") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))  
+
+# Save the plot
+ggsave(plot = p1, filename = "Grafici/counties.pdf", width = 7, height = 5, dpi = 300)
+
+p2 <- ggplot(data = ttwa_data) +
+  geom_sf(fill = 'magenta', color = 'black') +  # Fill color is magenta and border color is black
+  labs(title = "Travel to Work Areas") +  
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))  
+
+# Save the plot
+ggsave(plot = p2, filename = "Grafici/ttwas.pdf")
+
+# Combine the plots side by side for the notebook
+combined_plot <- plot_grid(p1, p2)
+
+# Display the combined plot
+print(combined_plot)
+```
+
+### Import population data
+
+From [ONS](https://www.ons.gov.uk/peoplepopulationandcommunity/populationandmigration/populationestimates/datasets/populationestimatesforukenglandandwalesscotlandandnorthernireland) I get the data of the population for each counties. Let's upload it and join it to counties_data
+
+```{r}
+counties_data_with_pop <- counties_data %>%
+  left_join(population_data %>% select(code, population), by = c("CTYUA23CD" = "code"))
+```
+
+### Evaluate the population in TTWA
+
+```{r}
+# Calculate the intersections
+intersections <- st_intersection(counties_data_with_pop, ttwa_data)
+
+# Calculate the area of each intersection
+intersections$intersection_area <- st_area(intersections)
+
+# Convert counties data to a regular data frame with necessary columns
+counties_areas <- counties_data_with_pop %>%
+  st_set_geometry(NULL) %>%  # This removes the geometry column
+  mutate(original_area = st_area(st_geometry(counties_data_with_pop))) %>%
+  select(CTYUA23CD, original_area)
+
+# Ensure intersections is prepared for the join
+intersections <- st_sf(intersections)  # Convert to sf if not already
+
+# Perform the join
+intersections <- intersections %>%
+  left_join(counties_areas, by = "CTYUA23CD")
+
+# Calculate the area proportion and proportional population
+intersections <- intersections %>%
+  mutate(
+    area_proportion = intersection_area / original_area,
+    proportional_population = population * area_proportion
+  )
+
+# Aggregate by TTWA ID
+ttwa_population <- intersections %>%
+  group_by(TTWA11CD) %>%
+  summarise(Total_Population = sum(proportional_population, na.rm = TRUE))
+```
+
+### Precision and recall test
+
+I want to test if this distribution is good choice. First of all the sum over the ttwas must be equal to the total population in UK and this is true!
+
+```{r}
+# Sum the Total_Population across all TTWAs       
+ total_population_across_ttwas <- sum(ttwa_population$Total_Population, na.rm = TRUE)
+ 
+print(total_population_across_ttwas)
+```
+
+Then I will compare the population in every ttwas with the population data for each city from [World Population Review](https://worldpopulationreview.com/countries/cities/united-kingdom). If the population of ttwa is greater than the population of the city in it the test is passed.
+
+```{r}
+# Conversione in un oggetto sf
+cities_sf <- st_as_sf(population_data_cities, coords = c("longitude", "latitude"), crs = 4326, agr = "constant")
+cities_sf <- st_transform(cities_sf, st_crs(ttwa_population))
+
+# Join spaziale tra le città e le TTWAs
+cities_ttwa <- st_join(cities_sf, ttwa_population, join = st_within)
+
+# Converti la popolazione totale in numerico senza unità
+cities_ttwa$Total_Population <- as.numeric(units::drop_units(cities_ttwa$Total_Population))
+
+# Aggiunta di una colonna per confrontare la popolazione
+cities_ttwa <- cities_ttwa %>% 
+  mutate(pop_check = ifelse(pop2024 <= Total_Population, 1, 0))
+
+# Calcolo della precisione e del richiamo
+total_correct = sum(cities_ttwa$pop_check, na.rm = TRUE)
+precision = total_correct / nrow(cities_ttwa)
+recall = total_correct / sum(!is.na(cities_ttwa$Total_Population))
+
+# Stampa dei risultati
+cat("Precision: ", precision, "\n")
+cat("Recall: ", recall, "\n")
+```
+
+The test is passed!
+
+## Plot of population across TTWAs
+
+```{r}
+# Drop unit
+ttwa_population$Total_Population <- as.numeric(units::drop_units(ttwa_population$Total_Population)) 
+
+# Plot TTWA data with population coloring using ggplot2
+p <- ggplot(data = ttwa_population) +
+  geom_sf(aes(fill = Total_Population)) +
+  scale_fill_gradientn(colors = brewer.pal(5, "YlOrRd")) +
+  labs(title = "Population Distribution Across TTWAs",
+       fill = "Total Population") +
+  theme_minimal()+
+    theme(
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    plot.caption = element_text(size = 8, hjust = 0),
+    legend.title = element_text(hjust=0.5)
+    )
+ggsave(plot= p, "Grafici/PopulationTTWAs.pdf")
+print(p)
+```
+
+## Discard low populated area
+
+```{r}
+# Generate summary statistics for Total_Population
+population_stats <- ttwa_population %>%
+  summarise(
+    Mean = mean(Total_Population, na.rm = TRUE),
+    Median = median(Total_Population, na.rm = TRUE),
+    SD = sd(Total_Population, na.rm = TRUE),
+    P25 = quantile(Total_Population, 0.25, na.rm = TRUE),
+    P75 = quantile(Total_Population, 0.75, na.rm = TRUE),
+    Min = min(Total_Population, na.rm = TRUE),
+    Max = max(Total_Population, na.rm = TRUE)
+  )
+
+# Print the summary statistics
+print(population_stats)
+```
+
+```{r}
+# Define a threshold, e.g., areas below the 25th percentile
+threshold <- quantile(ttwa_population$Total_Population, 0.25, na.rm = TRUE)
+
+# Add a new column to categorize TTWAs based on the threshold
+ttwa_population <- ttwa_population %>%
+  mutate(Category = ifelse(Total_Population >= threshold, "Above Threshold", "Below Threshold"))
+
+# Ensure the data is still recognized as an sf object
+ttwa_population <- st_as_sf(ttwa_population)
+
+# Create a discrete color scale manually for the legend
+ttwa_population$Category_color <- ifelse(ttwa_population$Category == "Above Threshold", ttwa_population$Total_Population, NA)
+
+# Plotting
+p <- ggplot(data = ttwa_population) +
+  geom_sf(aes(fill = Category_color), color = "black", size = 0.2) +  # Outline color set to black
+  scale_fill_gradientn(
+    colors = brewer.pal(5, "YlOrRd"), 
+    na.value = "gray",  # Areas below threshold in black
+    limits = c(min(ttwa_population$Total_Population, na.rm = TRUE), max(ttwa_population$Total_Population, na.rm = TRUE))
+  ) +
+  labs(
+    title = "Population across TTWAs",
+    subtitle = "Areas colored by population, gray indicates below threshold",
+    fill = "Total Population"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12, hjust=0.5),
+    plot.caption = element_text(hjust = 0, size = 8),
+    legend.title = element_text(hjust=0.5)
+  )
+ggsave(plot=p, "Grafici/LowedPopulationTTWAs.pdf")
+print(p)
+```
+
+# Import nodes and edges and filter
+
+```{r}
+# Definisci la soglia di popolazione
+threshold <- quantile(ttwa_population$Total_Population, 0.25, na.rm = TRUE)
+
+# Converti i nodi in oggetto sf mantenendo le colonne lon e lat
+nodes_sf <- st_as_sf(nodes, coords = c("lon", "lat"), crs = 4326, agr = "constant", remove = FALSE)
+nodes_sf <- st_transform(nodes_sf, st_crs(ttwa_data))
+
+# Join spaziale dei nodi con le aree TTWA
+nodes_with_ttwa <- st_join(nodes_sf, ttwa_data, join = st_within)
+nodes_with_ttwa <- nodes_with_ttwa %>%
+  st_set_geometry(NULL) %>%
+  select(node, lon, lat, layer, TTWA11CD, TTWA11NM)
+
+# Aggiungi la popolazione e il threshold
+nodes_with_ttwa <- nodes_with_ttwa %>%
+  left_join(ttwa_population, by = c("TTWA11CD" = "TTWA11CD")) %>%
+  mutate(threshold_category = ifelse(Total_Population >= threshold, "Above", "Below"))
+
+# Calcola il grado dei nodi
+node_degrees <- edges %>%
+  select(ori_node, des_node) %>%
+  pivot_longer(cols = c(ori_node, des_node), names_to = "type", values_to = "node") %>%
+  group_by(node) %>%
+  summarise(degree = n())
+
+# Unisci il grado dei nodi al dataframe dei nodi
+nodes_with_ttwa <- nodes_with_ttwa %>%
+  left_join(node_degrees, by = "node") %>%
+  mutate(degree = ifelse(is.na(degree), 0, degree))
+
+# Filtra le aree sotto la soglia di popolazione
+nodes_in_threshold_ttwa <- nodes_with_ttwa %>%
+  filter(threshold_category == "Above")
+
+# Filtra gli archi in base ai nodi filtrati
+filtered_edges <- edges %>%
+  filter(ori_node %in% nodes_in_threshold_ttwa$node & des_node %in% nodes_in_threshold_ttwa$node)
+
+# Funzione per rimuovere colonne di tipo "list"
+remove_list_columns <- function(df) {
+  df <- df %>% mutate(across(where(is.list), ~sapply(., toString)))
+  return(df)
+}
+
+# Funzione per salvare i dati per ogni layer
+save_layer_data <- function(layer, nodes_current_layer, edges_current_layer, ttwa_name) {
+  # Verifica che ci siano nodi e archi nel layer corrente
+  if (nrow(nodes_current_layer) == 0 || nrow(edges_current_layer) == 0) {
+    return()
+  }
+  
+  # Trova il nome del layer corrispondente
+  layer_label <- layer_mapping$layerLabel[layer_mapping$layer == layer]
+  
+  # Salva i file nodes e edges
+  nodes_to_save <- nodes_current_layer %>%
+    select(node, layer, lat, lon, degree, geometry)
+  nodes_to_save <- remove_list_columns(nodes_to_save)
+  
+  fwrite(nodes_to_save, paste0("Network_data/", ttwa_name, "/", layer_label, "_nodes.csv"))
+  fwrite(edges_current_layer, paste0("Network_data/", ttwa_name, "/", layer_label, "_edges.csv"))
+  
+  # Prepara i dati per la visualizzazione
+  edges_current_layer <- edges_current_layer %>%
+    left_join(nodes_current_layer %>% select(node, lon, lat), by = c("ori_node" = "node")) %>%
+    rename(x_from = lon, y_from = lat) %>%
+    left_join(nodes_current_layer %>% select(node, lon, lat), by = c("des_node" = "node")) %>%
+    rename(x_to = lon, y_to = lat)
+  
+  edges_current_layer <- edges_current_layer %>%
+    filter(!is.na(x_from) & !is.na(y_from) & !is.na(x_to) & !is.na(y_to))
+}
+
+# Funzione per processare i dati per una TTWA specifica
+process_ttwa <- function(ttwa_code) {
+  # Ottieni il nome della TTWA
+  ttwa_name <- unique(ttwa_data$TTWA11NM[ttwa_data$TTWA11CD == ttwa_code])
+  
+  # Verifica che ttwa_name non sia vuoto
+  if (length(ttwa_name) == 0) {
+    warning(paste("TTWA name not found for TTWA code:", ttwa_code))
+    return()
+  }
+  
+  # Assicurati che ttwa_name sia una stringa
+  ttwa_name <- as.character(ttwa_name)[1]
+  
+  # Rimuovi caratteri non validi
+  ttwa_name <- gsub("[^a-zA-Z0-9]", "_", ttwa_name)
+  
+  # Crea directory per il TTWA corrente
+  dir.create(paste0("Network_data/", ttwa_name), recursive = TRUE, showWarnings = FALSE)
+  
+  # Filtra i nodi e gli archi per la TTWA corrente
+  nodes_ttwa <- nodes_in_threshold_ttwa %>%
+    filter(TTWA11CD == ttwa_code) %>%
+    st_as_sf(coords = c("lon", "lat"), crs = st_crs(ttwa_data), agr = "constant", remove = FALSE)
+  
+  edges_ttwa <- filtered_edges %>%
+    filter(ori_node %in% nodes_ttwa$node & des_node %in% nodes_ttwa$node)
+  
+  layers <- unique(layer_mapping$layer)
+  for (layer in layers) {
+    nodes_current_layer <- nodes_ttwa[nodes_ttwa$layer == layer, ]
+    edges_current_layer <- edges_ttwa[edges_ttwa$ori_layer == layer & edges_ttwa$des_layer == layer, ]
+    save_layer_data(layer, nodes_current_layer, edges_current_layer, ttwa_name)
+  }
+}
+
+# Processa le TTWA sopra la soglia
+for (ttwa in unique(nodes_in_threshold_ttwa$TTWA11CD)) {
+  process_ttwa(ttwa)
+}
+
+# Funzione per processare i dati per l'intera UK
+process_uk <- function() {
+  uk_name <- "UK"
+  dir.create(paste0("Network_data/", uk_name), recursive = TRUE, showWarnings = FALSE)
+  
+  nodes_uk <- nodes_in_threshold_ttwa
+  edges_uk <- filtered_edges
+  
+  layers <- unique(layer_mapping$layer)
+  for (layer in layers) {
+    nodes_current_layer <- nodes_uk[nodes_uk$layer == layer, ]
+    edges_current_layer <- edges_uk[edges_uk$ori_layer == layer & edges_uk$des_layer == layer, ]
+    save_layer_data(layer, nodes_current_layer, edges_current_layer, uk_name)
+  }
+}
+
+# Processa l'intera UK
+process_uk()
+```
+
+# Analysis of the multilayer network
+
+```{r}
+# Funzione per creare un singolo plot di un layer
+create_layer_plot <- function(layer) {
+  
+  layer_label <- layer_mapping$layerLabel[layer_mapping$layer == layer]
+  nodes_file <- paste0("Network_data/UK/", layer_label, "_nodes.csv")
+  edges_file <- paste0("Network_data/UK/", layer_label, "_edges.csv")
+  
+  nodes_layer <- fread(nodes_file)
+  edges_layer <- fread(edges_file)
+  
+  # Verifica che ci siano dati per il layer corrente
+  if (nrow(nodes_layer) == 0 || nrow(edges_layer) == 0) {
+    return(NULL)
+  }
+  
+  # Converti i nodi in oggetto sf con il sistema di riferimento originale
+  nodes_sf <- st_as_sf(nodes_layer, coords = c("lon", "lat"), crs = 4326, remove = FALSE)
+  
+  # Trasforma le coordinate nel sistema di riferimento della mappa UK
+  nodes_sf <- st_transform(nodes_sf, st_crs(ttwa_data))
+  
+  # Estrarre le coordinate trasformate
+  nodes_layer <- nodes_layer %>%
+    mutate(lon_trans = st_coordinates(nodes_sf)[,1],
+           lat_trans = st_coordinates(nodes_sf)[,2])
+  
+  # Unisci con le posizioni dei nodi per ottenere le coordinate degli edges
+  edges_df <- edges_layer %>%
+    left_join(nodes_layer %>% select(node, lon_trans, lat_trans), by = c("ori_node" = "node")) %>%
+    rename(x_from = lon_trans, y_from = lat_trans) %>%
+    left_join(nodes_layer %>% select(node, lon_trans, lat_trans), by = c("des_node" = "node")) %>%
+    rename(x_to = lon_trans, y_to = lat_trans)
+  
+  # Trova il nome del layer corrispondente
+  transport_mode <- layer_label
+  
+  # Scegli colori specifici per ogni tipo di trasporto
+  colors <- c("Rail" = "#00FF99", "Coach" = "#FFA500", "Air" = "#FF0045", "Ferry" = "#0090FF", "Metro" = "#FF00FF", "Bus" = "#FFFF00")
+  edge_color <- colors[transport_mode]
+  
+  # Plot con ggplot2 sovrapponendo sulla mappa della UK
+  uk_map <- st_geometry(ttwa_data)
+  p <- ggplot() +
+    geom_sf(data = uk_map, fill = 'gray20', color = 'gray40') +  # Mappa della UK con colori più eleganti
+    geom_segment(data = edges_df, aes(x = x_from, y = y_from, xend = x_to, yend = y_to), color = edge_color, linewidth = 0.5, alpha = 0.6) +  # Collegamenti colorati
+    geom_point(data = nodes_layer, aes(x = lon_trans, y = lat_trans), color = edge_color, alpha = 0.8, size=0.01) +  # Nodi colorati, dimensione proporzionale al grado
+    theme_void() +  # Tema minimalista per migliorare l'aspetto grafico
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 18, face = "bold", color = "white"),  # Titolo centrato e bianco
+      plot.subtitle = element_text(size = 14, color = "white"),  # Sottotitolo bianco
+      legend.position = "none",  # Nascondi la legenda
+      panel.background = element_rect(fill = "black"),  # Sfondo nero
+      plot.background = element_rect(fill = "black")  # Sfondo nero
+    ) +
+    ggtitle(transport_mode)  # Titolo del grafico
+  
+  return(p)
+}
+
+# Funzione per combinare i plot dei diversi layer
+plot_multilayer_network <- function() {
+  layers <- c(0,1,2,4)
+  plot_list <- list()
+  
+  for (layer in layers) {
+    p <- create_layer_plot(layer)
+    if (!is.null(p)) {
+      plot_list[[length(plot_list) + 1]] <- p
+    }
+  }
+  
+  # Combina tutti i plot in una singola figura con layout orizzontale
+  if (length(plot_list) > 0) {
+    combined_plot <- plot_grid(plotlist = plot_list, ncol = length(plot_list), align = 'h')
+    
+    # Salva il plot combinato
+    ggsave("Grafici/multilayer_network_uk.pdf", combined_plot, width = 7, height = 5, dpi = 300)
+    
+    # Mostra il plot combinato
+    print(combined_plot)
+  } else {
+    print("No data available to plot.")
+  }
+}
+
+# Esegui la funzione per creare il plot multilivello
+plot_multilayer_network()
+```
+
+## Inter-layer matrix
+
+```{r}
+# Funzione per calcolare la matrice di connessioni tra layer
+calculate_interlayer_matrix <- function() {
+  all_layers <- layer_mapping$layer
+  layer_labels <- layer_mapping$layerLabel
+  
+  # Inizializza la matrice di connessioni
+  interlayer_matrix <- matrix(0, nrow = length(all_layers), ncol = length(all_layers))
+  colnames(interlayer_matrix) <- layer_labels
+  rownames(interlayer_matrix) <- layer_labels
+  
+  for (i in seq_along(all_layers)) {
+    for (j in seq_along(all_layers)) {
+      ori <- all_layers[i]
+      des <- all_layers[j]
+      
+      # Filtra gli archi per i layer specificati
+      edges_filtered <- edges %>%
+        filter(ori_layer == ori & des_layer == des)
+      
+      # Conta il numero di connessioni
+      connection_count <- nrow(edges_filtered)
+      
+      # Aggiorna la matrice
+      interlayer_matrix[i, j] <- connection_count
+    }
+  }
+  
+  return(interlayer_matrix)
+}
+
+
+
+
+# Funzione per plottare la matrice di connessioni interlayer
+plot_interlayer_matrix <- function(interlayer_matrix) {
+  interlayer_df <- melt(interlayer_matrix, varnames = c("Layer1", "Layer2"), value.name = "Connections")
+  
+  # Stampa intermedia per verifica
+  print(interlayer_df)
+  
+  p <- ggplot(interlayer_df, aes(x = Layer1, y = Layer2, fill = log10(Connections + 1))) +
+    geom_tile(color = "white") +
+    scale_fill_gradient(low = "lightyellow", high = "darkgreen", na.value = "white") +
+    labs(title = "Interlayer Connection Matrix for UK", x = "Layer", y = "Layer", fill = "Log(Connections)") +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 18, face = "bold", color = "black"),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank()
+    )
+  
+  # Mostra il grafico
+  print(p)
+  
+  # Salva il grafico
+  ggsave("Grafici/interlayer_connection_matrix_UK.pdf", plot = p, width = 10, height = 8, dpi = 300)
+}
+
+# Calcola la matrice di connessioni interlayer
+interlayer_matrix <- calculate_interlayer_matrix()
+
+# Plotta la matrice di connessioni interlayer
+plot_interlayer_matrix(interlayer_matrix)
+```
+
+# Plot
+
+```{r}
+# Funzione per plottare il network per una TTWA e un layer specifico
+plot_network_layer_for_ttwa <- function(ttwa_code, layer) {
+  # Ottieni il nome della TTWA
+  ttwa_name <- unique(ttwa_data$TTWA11NM[ttwa_data$TTWA11CD == ttwa_code])
+  
+  # Verifica che ttwa_name non sia vuoto
+  if (length(ttwa_name) == 0) {
+    warning(paste("TTWA name not found for TTWA code:", ttwa_code))
+    return()
+  }
+  
+  # Assicurati che ttwa_name sia una stringa
+  ttwa_name <- as.character(ttwa_name)[1]
+  
+  # Rimuovi caratteri non validi
+  ttwa_name <- gsub("[^a-zA-Z0-9]", "_", ttwa_name)
+  
+  # Carica i dati del network per la TTWA e il layer specificati
+  layer_label <- layer_mapping$layerLabel[layer_mapping$layer == layer]
+  nodes_file <- paste0("Network_data/", ttwa_name, "/", layer_label, "_nodes.csv")
+  edges_file <- paste0("Network_data/", ttwa_name, "/", layer_label, "_edges.csv")
+  
+  if (!file.exists(nodes_file) || !file.exists(edges_file)) {
+    return()
+  }
+  
+  nodes_ttwa_layer <- fread(nodes_file)
+  edges_ttwa_layer <- fread(edges_file)
+  
+  # Carica i dati della mappa della TTWA specifica
+  ttwa_sf <- ttwa_data %>% filter(TTWA11CD == ttwa_code)
+  
+  # Converti i nodi in oggetto sf con il sistema di riferimento originale
+  nodes_sf <- st_as_sf(nodes_ttwa_layer, coords = c("lon", "lat"), crs = 4326, remove = FALSE)
+  
+  # Trasforma le coordinate nel sistema di riferimento della mappa TTWA
+  nodes_sf <- st_transform(nodes_sf, st_crs(ttwa_sf))
+  
+  # Estrarre le coordinate trasformate
+  nodes_ttwa_layer <- nodes_ttwa_layer %>%
+    mutate(lon_trans = st_coordinates(nodes_sf)[,1],
+           lat_trans = st_coordinates(nodes_sf)[,2])
+  
+  # Unisci con le posizioni dei nodi per ottenere le coordinate degli edges
+  edges_df <- edges_ttwa_layer %>%
+    left_join(nodes_ttwa_layer %>% select(node, lon_trans, lat_trans), by = c("ori_node" = "node")) %>%
+    rename(x_from = lon_trans, y_from = lat_trans) %>%
+    left_join(nodes_ttwa_layer %>% select(node, lon_trans, lat_trans), by = c("des_node" = "node")) %>%
+    rename(x_to = lon_trans, y_to = lat_trans)
+  
+  # Trova il nome del layer corrispondente
+  transport_mode <- layer_label
+  
+  # Scegli colori specifici per ogni tipo di trasporto
+  colors <- c("Rail" = "#00FF99", "Coach" = "#FFA500", "Air" = "#FF0045", "Ferry" = "#0000FF", "Metro" = "#FF00FF", "Bus" = "#FFFF00")
+  edge_color <- colors[transport_mode]
+  
+  # Plot con ggplot2 sovrapponendo sulla mappa della TTWA
+  ttwa_map <- st_geometry(ttwa_sf)
+  p <- ggplot() +
+    geom_sf(data = ttwa_map, fill = 'gray20', color = 'gray40') +  # Mappa della TTWA con colori più eleganti
+    geom_segment(data = edges_df, aes(x = x_from, y = y_from, xend = x_to, yend = y_to), color = edge_color, size = 0.5, alpha = 0.6) +  # Collegamenti colorati
+    geom_point(data = nodes_ttwa_layer, aes(x = lon_trans, y = lat_trans, size = degree), color = edge_color, alpha = 0.8) +  # Nodi colorati, dimensione proporzionale al grado
+    scale_size_continuous(range = c(0.1, 2)) +  # Dimensione dei nodi proporzionale al grado
+    theme_minimal() +  # Tema minimalista per migliorare l'aspetto grafico
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 18, face = "bold", color = "white"),  # Titolo centrato e bianco
+      plot.subtitle = element_text(size = 14, color = "white"),  # Sottotitolo bianco
+      legend.position = "none",  # Nascondi la legenda
+      panel.background = element_rect(fill = "black"),  # Sfondo nero
+      plot.background = element_rect(fill = "black")  # Sfondo nero
+    ) +
+    ggtitle(paste(transport_mode, "Network for", ttwa_name))  # Titolo del grafico
+  
+  # Mostra il plot
+  print(p)
+  
+  # Salva il plot
+  ggsave(paste0("Grafici/network_layer_", layer, "_", transport_mode, "_", ttwa_name, ".pdf"), plot = p, width = 10, height = 8, dpi = 300)
+}
+```
+
+```{r}
+#Plot London TTWA
+ttwa <- ttwa_data$TTWA11CD[ttwa_data$TTWA11NM=="London"]
+for (layer in unique(layer_mapping$layer)) {
+    plot_network_layer_for_ttwa(ttwa, layer)
+}
+
+#Plot UK
+for (layer in unique(layer_mapping$layer)) {
+    plot_network_layer_for_uk(layer)
+}
+```
