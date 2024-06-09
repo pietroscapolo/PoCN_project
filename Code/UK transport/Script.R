@@ -9,12 +9,12 @@ library(RColorBrewer)
 library(gridExtra)
 
 # Load data
-counties_data <- st_read("Data base/Counties boundaries/CTYUA_DEC_2023_UK_BUC.shp")
-ttwa_data <- st_read("Data base/Travel to work areas/TTWA_2011_UK_BUC_500.shp")
-population_data <- fread("Data base/population data.csv")
-nodes <- fread("Data base/nodes.csv")
-edges <- fread("Data base/edges.csv")
-layer_mapping <- fread("Data base/layers.csv")
+counties_data <- st_read("Input data/Counties boundaries/CTYUA_DEC_2023_UK_BUC.shp")
+ttwa_data <- st_read("Input data/Travel to work areas/TTWA_2011_UK_BUC_500.shp")
+population_data <- fread("Input data/population data.csv")
+nodes <- fread("Input data/nodes.csv")
+edges <- fread("Input data/edges.csv")
+layer_mapping <- fread("Input data/layers.csv")
 
 # Create plots for counties and TTWAs
 p1 <- ggplot(data = counties_data) +
@@ -24,7 +24,7 @@ p1 <- ggplot(data = counties_data) +
   theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
 
 # Save the plot
-ggsave(plot = p1, filename = "Grafici/counties.pdf", width = 7, height = 5, dpi = 300)
+ggsave(plot = p1, filename = "Images/counties.pdf", width = 7, height = 5, dpi = 300)
 
 p2 <- ggplot(data = ttwa_data) +
   geom_sf(fill = 'magenta', color = 'black') +  # Fill color is magenta and border color is black
@@ -33,7 +33,7 @@ p2 <- ggplot(data = ttwa_data) +
   theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
 
 # Save the plot
-ggsave(plot = p2, filename = "Grafici/ttwas.pdf")
+ggsave(plot = p2, filename = "Images/ttwas.pdf")
 
 # Combine the plots side by side
 combined_plot <- plot_grid(p1, p2)
@@ -65,7 +65,7 @@ ttwa_population <- intersections %>%
 
 
 # Compare with city population data for precision and recall test
-pop <- fread("Data base/country-cities-data.csv")
+pop <- fread("Input data/country-cities-data.csv")
 cities_sf <- st_as_sf(pop, coords = c("longitude", "latitude"), crs = 4326, agr = "constant")
 cities_sf <- st_transform(cities_sf, st_crs(ttwa_population))
 cities_ttwa <- st_join(cities_sf, ttwa_population, join = st_within)
@@ -92,7 +92,7 @@ p <- ggplot(data = ttwa_population) +
     plot.caption = element_text(size = 8, hjust = 0),
     legend.title = element_text(hjust = 0.5)
   )
-ggsave(plot = p, "Grafici/PopulationTTWAs.pdf")
+ggsave(plot = p, "Images/PopulationTTWAs.pdf")
 #print(p)
 
 # Discard low populated areas
@@ -121,7 +121,7 @@ p <- ggplot(data = ttwa_population) +
     plot.caption = element_text(hjust = 0, size = 8),
     legend.title = element_text(hjust = 0.5)
   )
-ggsave(plot = p, "Grafici/LowedPopulationTTWAs.pdf")
+ggsave(plot = p, "Images/LowedPopulationTTWAs.pdf")
 #print(p)
 
 # Filter nodes and edges based on population threshold
@@ -194,7 +194,7 @@ plot_interlayer_matrix <- function(interlayer_matrix) {
   
   #print(p)
   
-  ggsave("Grafici/interlayer_connection_matrix_UK.pdf", plot = p, width = 10, height = 8, dpi = 300)
+  ggsave("Images/interlayer_connection_matrix_UK.pdf", plot = p, width = 10, height = 8, dpi = 300)
 }
 
 #Calculate the interlayer connection matrix
@@ -216,8 +216,8 @@ save_layer_data <- function(layer, nodes_current_layer, edges_current_layer, ttw
   nodes_to_save <- nodes_current_layer %>%
     select(node, layer, lat, lon, degree, geometry) %>%
     remove_list_columns()
-  fwrite(nodes_to_save, paste0("Network_data/", ttwa_name, "/", layer_label, "_nodes.csv"))
-  fwrite(edges_current_layer, paste0("Network_data/", ttwa_name, "/", layer_label, "_edges.csv"))
+  fwrite(nodes_to_save, paste0("Data/", ttwa_name, "/", layer_label, "_nodes.csv"))
+  fwrite(edges_current_layer, paste0("Data/", ttwa_name, "/", layer_label, "_edges.csv"))
   
   edges_current_layer <- edges_current_layer %>%
     left_join(nodes_current_layer %>% select(node, lon, lat), by = c("ori_node" = "node")) %>%
@@ -237,7 +237,7 @@ process_ttwa <- function(ttwa_code) {
   }
   ttwa_name <- as.character(ttwa_name)[1]
   ttwa_name <- gsub("[^a-zA-Z0-9]", "_", ttwa_name)
-  dir.create(paste0("Network_data/", ttwa_name), recursive = TRUE, showWarnings = FALSE)
+  dir.create(paste0("Data/", ttwa_name), recursive = TRUE, showWarnings = FALSE)
   nodes_ttwa <- nodes_in_threshold_ttwa %>%
     filter(TTWA11CD == ttwa_code) %>%
     st_as_sf(coords = c("lon", "lat"), crs = st_crs(ttwa_data), agr = "constant", remove = FALSE)
@@ -261,7 +261,7 @@ for (ttwa in unique(nodes_in_threshold_ttwa$TTWA11CD)) {
 
 process_uk <- function() {
   uk_name <- "UK"
-  dir.create(paste0("Network_data/", uk_name), recursive = TRUE, showWarnings = FALSE)
+  dir.create(paste0("Data/", uk_name), recursive = TRUE, showWarnings = FALSE)
   nodes_uk <- nodes_in_threshold_ttwa
   edges_uk <- filtered_edges
   layers <- unique(layer_mapping$layer)
@@ -280,8 +280,8 @@ process_uk()
 
 plot_network_layer_for_uk <- function(layer) {
   layer_label <- layer_mapping$layerLabel[layer_mapping$layer == layer]
-  nodes_file <- paste0("Network_data/UK/", layer_label, "_nodes.csv")
-  edges_file <- paste0("Network_data/UK/", layer_label, "_edges.csv")
+  nodes_file <- paste0("Data/UK/", layer_label, "_nodes.csv")
+  edges_file <- paste0("Data/UK/", layer_label, "_edges.csv")
   
   if (!file.exists(nodes_file) || !file.exists(edges_file)) {
     return()
@@ -324,7 +324,7 @@ plot_network_layer_for_uk <- function(layer) {
                
                #print(p)
                
-               ggsave(paste0("Grafici/network_layer_", layer, "_", transport_mode, "_UK.pdf"), plot = p, width = 10, height = 8, dpi = 300)
+               ggsave(paste0("Images/network_layer_", layer, "_", transport_mode, "_UK.pdf"), plot = p, width = 10, height = 8, dpi = 300)
 }
 
 #Plot the network for each layer in the UK
@@ -347,8 +347,8 @@ plot_network_layer_for_ttwa <- function(ttwa_code, layer) {
   ttwa_name <- gsub("[^a-zA-Z0-9]", "_", ttwa_name)
   
   layer_label <- layer_mapping$layerLabel[layer_mapping$layer == layer]
-  nodes_file <- paste0("Network_data/", ttwa_name, "/", layer_label, "_nodes.csv")
-  edges_file <- paste0("Network_data/", ttwa_name, "/", layer_label, "_edges.csv")
+  nodes_file <- paste0("Data/", ttwa_name, "/", layer_label, "_nodes.csv")
+  edges_file <- paste0("Data/", ttwa_name, "/", layer_label, "_edges.csv")
   
   if (!file.exists(nodes_file) || !file.exists(edges_file)) {
     return()
@@ -393,7 +393,7 @@ plot_network_layer_for_ttwa <- function(ttwa_code, layer) {
                
                #print(p)
                
-               ggsave(paste0("Grafici/network_layer_", layer, "", transport_mode, "", ttwa_name, ".pdf"), plot = p, width = 10, height = 8, dpi = 300)
+               ggsave(paste0("Images/network_layer_", layer, "", transport_mode, "", ttwa_name, ".pdf"), plot = p, width = 10, height = 8, dpi = 300)
 }
 
 #Plot the network for each layer in each TTWA
@@ -410,8 +410,8 @@ for (ttwa in unique(ttwa_data$TTWA11CD)) {
 
 create_layer_plot <- function(layer) {
   layer_label <- layer_mapping$layerLabel[layer_mapping$layer == layer]
-  nodes_file <- paste0("Network_data/UK/", layer_label, "_nodes.csv")
-  edges_file <- paste0("Network_data/UK/", layer_label, "_edges.csv")
+  nodes_file <- paste0("Data/UK/", layer_label, "_nodes.csv")
+  edges_file <- paste0("Data/UK/", layer_label, "_edges.csv")
   
   if (!file.exists(nodes_file) || !file.exists(edges_file)) {
     return(NULL)
@@ -473,7 +473,7 @@ plot_multilayer_network <- function() {
   
   if (length(plot_list) > 0) {
     combined_plot <- plot_grid(plotlist = plot_list, ncol = length(plot_list), align = "h")
-    ggsave("Grafici/multilayer_network_uk.png", combined_plot, width = 15, height = 5, dpi = 300)
+    ggsave("Images/multilayer_network_uk.png", combined_plot, width = 15, height = 5, dpi = 300)
     #print(combined_plot)
   } else {
     print("No data available to plot.")
