@@ -3,10 +3,13 @@
 # Load necessary libraries
 library(sf)
 library(ggplot2)
+library(cowplot)
 library(data.table)
 library(dplyr)
 library(RColorBrewer)
 library(gridExtra)
+library(reshape2)
+library(tidyr)
 
 # Load data
 counties_data <- st_read("Input data/Counties boundaries/CTYUA_DEC_2023_UK_BUC.shp")
@@ -474,7 +477,7 @@ plot_multilayer_network <- function() {
   if (length(plot_list) > 0) {
     combined_plot <- plot_grid(plotlist = plot_list, ncol = length(plot_list), align = "h")
     ggsave("Images/multilayer_network_uk.png", combined_plot, width = 15, height = 5, dpi = 300)
-    #print(combined_plot)
+    print(combined_plot)
   } else {
     print("No data available to plot.")
   }
