@@ -3,23 +3,20 @@
 \section{\#42 Public Transport in the UK}
 
 
-\subsection*{Rationale for Excluding Transport Lines and Year Data}
-The decision to exclude transport lines and year data from the network files was based on several considerations. Firstly, the primary focus of this study was to analyze the structural properties of the transport networks within the UK. Including detailed line information and historical data would have added complexity without significantly enhancing the analysis of network topology and connectivity.
+\subsection*{The reason I excluded transport lines and year data}
+The decision to exclude transport lines and year data was based on several considerations. The main objective of this study was to analyze the structural properties of the UK transport networks, and including detailed line information and historical data would have added unnecessary complexity.
 
-The datasets available were limited to one week of data, as detailed in the original paper by Gallotti et al. (2015)\cite{gallotti2015}, making it impossible to include the year data. Furthermore, differentiating the network for each day of the week was deemed uninteresting for the scope of this study.
+The provided datasets were limited to one week of data from 2011, as detailed by Gallotti et al. (2015) \cite{gallotti2015}, making it impossible to include multiple years. The datasets contained timetable information for every service departure, resulting in a voluminous and repetitive data set, complicating analysis. While Gallotti et al. used this data to study temporal network evolution, our focus was on network structure.
 
-The temporal data file provided contained events, essentially the timetable of stops. Handling this file was challenging due to its sheer size, which complicated data processing. Moreover, reconstructing the lines from this data proved to be highly complex. This task would likely require an advanced algorithm or machine learning techniques to accurately distinguish and identify the transport lines. Therefore, we decided to focus on the more feasible aspects of the analysis and leave this intricate task for future research.
+Handling the temporal data file, events.txt, was challenging due to its size. The only potential way to implement this would have been to reconstruct the lines from the events.txt file, which would have been extremely complex. One approach could have been to identify departure and arrival nodes and use the provided stop times to determine which nodes formed a line but that would have required advanced algorithms or machine learning techniques. 
 
-The main datasets used in this study were:
-- \textit{Events data}: containing the timetable of stops for the public transport system.
-- \textit{Stops data}: providing the geographical locations of stops.
-- \textit{Population data}: used to distribute populations across TTWAs for network analysis.
 
-These datasets were instrumental in creating a comprehensive view of the network's structure without the added complexity of line-specific and temporal data.
+Given these challenges, I decided to focus on the more feasible task of network structure analysis, leaving the detailed reconstruction of transport lines for future research. This approach allowed for a clear and manageable analysis of the network's structural properties
 
-\begin{thebibliography}{9}
-\bibitem{gallotti2015} Gallotti, R., et al. "A stochastic model of randomly accelerated walkers for human mobility." \textit{Nature Communications} 6.1 (2015): 1-9.
-\end{thebibliography}
+
+
+
+
 \subsection*{Additional Plots: Counties vs. TTWAs Visualization}
 To provide a clearer understanding of how the population data were redistributed from counties to TTWAs, the following plots illustrate the geographical relationship between these regions.
 

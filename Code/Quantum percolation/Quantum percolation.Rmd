@@ -1,0 +1,430 @@
+---
+title: "Quantum Percolation"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+---
+
+Introduction
+
+```{r setup, include=FALSE}
+library(igraph) 
+library(ggplot2) 
+
+set.seed(123) # Per riproducibilità
+```
+
+```{r}
+# Funzione per generare una rete di Erdős-Rényi con nodi entangled
+generate_network <- function(N, p) {
+  g <- erdos.renyi.game(N, p, type = "gnp")
+  E(g)$state <- sample(c("entangled", "not entangled"), ecount(g), replace = TRUE)
+  return(g)
+}
+
+# Funzione per calcolare la dimensione del componente gigante
+calculate_giant_component <- function(g) {
+  clusters_info <- clusters(g)
+  giant_component_size <- max(clusters_info$csize)
+  return(giant_component_size)
+}
+
+# Funzione per lo swapping di entanglement
+entanglement_swapping <- function(g) {
+  V(g)$label <- 1:vcount(g)
+  
+  for (v in V(g)) {
+    neighbors_v <- neighbors(g, v)
+    
+    while (length(neighbors_v) >= 2) {
+      swapped <- FALSE
+      
+      for (i in 1:(length(neighbors_v) - 1)) {
+        for (j in (i + 1):length(neighbors_v)) {
+          edge1 <- get.edge.ids(g, c(V(g)$label[v], V(g)$label[neighbors_v[i]]))
+          edge2 <- get.edge.ids(g, c(V(g)$label[v], V(g)$label[neighbors_v[j]]))
+          
+          if (length(edge1) == 0 || length(edge2) == 0 || !edge1 %in% E(g) || !edge2 %in% E(g)) {
+            next
+          }
+          
+          state1 <- E(g)$state[edge1]
+          state2 <- E(g)$state[edge2]
+          
+          if (state1 == "entangled" && state2 == "entangled") {
+            if (!are.connected(g, neighbors_v[i], neighbors_v[j])) {
+              g <- add_edges(g, c(neighbors_v[i], neighbors_v[j]), attr = list(state = "entangled"))
+            }
+            g <- delete_edges(g, c(edge1, edge2))
+            swapped <- TRUE
+            break
+          }
+        }
+        if (swapped) break
+      }
+      
+      neighbors_v <- neighbors(g, v)
+      if (!swapped) break
+    }
+  }
+  
+  return(g)
+}
+
+# Parametri
+N <- 1000
+p_values <- seq(0.001, 0.1, by = 0.001)
+
+# Dati per il metodo con entanglement swapping
+data_swapping <- data.frame(p = numeric(), giant_component_size = numeric())
+
+for (p in p_values) {
+  g <- generate_network(N, p)
+  g <- entanglement_swapping(g)
+  giant_component_size <- calculate_giant_component(g)
+  data_swapping <- rbind(data_swapping, data.frame(p = p, giant_component_size = giant_component_size / N))
+}
+
+# Metodo classico di percolazione
+data_classical <- data.frame(p = numeric(), giant_component_size = numeric())
+
+for (p in p_values) {
+  g <- erdos.renyi.game(N, p, type = "gnp")
+  giant_component_size <- calculate_giant_component(g)
+  data_classical <- rbind(data_classical, data.frame(p = p, giant_component_size = giant_component_size / N))
+}
+
+# Plot dei risultati
+ggplot() +
+  geom_line(data = data_swapping, aes(x = p, y = giant_component_size), color = "blue") +
+  geom_line(data = data_classical, aes(x = p, y = giant_component_size), color = "red", linetype = "dashed") +
+  labs(title = "Giant Component Size: Quantum Percolation vs Classical Percolation",
+       x = "Probability of Connection (p)",
+       y = "Giant Component Size (fraction of total nodes)") +
+  theme_minimal() +
+  scale_color_manual(values = c("blue", "red"), labels = c("Quantum Percolation", "Classical Percolation"))
+```
+
+```{r}
+library(igraph)
+library(ggplot2)
+
+# Funzione per generare una rete di Erdős-Rényi con stati entangled
+generate_network <- function(N, p) {
+  g <- erdos.renyi.game(N, p, type = "gnp")
+  E(g)$lambda <- runif(ecount(g), 0.5, 1.0)  # Parametro lambda0
+  E(g)$p_singlet <- pmin(1, 2 * (1 - E(g)$lambda))  # Probabilità di conversione a singoletto
+  return(g)
+}
+
+# Funzione per calcolare la dimensione del componente gigante
+calculate_giant_component <- function(g) {
+  clusters_info <- clusters(g)
+  giant_component_size <- max(clusters_info$csize)
+  return(giant_component_size)
+}
+
+# Funzione per lo swapping di entanglement
+entanglement_swapping <- function(g) {
+  V(g)$label <- 1:vcount(g)
+  
+  for (v in V(g)) {
+    neighbors_v <- neighbors(g, v)
+    
+    while (length(neighbors_v) >= 2) {
+      swapped <- FALSE
+      
+      for (i in 1:(length(neighbors_v) - 1)) {
+        for (j in (i + 1):length(neighbors_v)) {
+          edge1 <- get.edge.ids(g, c(V(g)$label[v], V(g)$label[neighbors_v[i]]))
+          edge2 <- get.edge.ids(g, c(V(g)$label[v], V(g)$label[neighbors_v[j]]))
+          
+          if (length(edge1) == 0 || length(edge2) == 0) next
+          
+          p_singlet1 <- E(g)$p_singlet[edge1]
+          p_singlet2 <- E(g)$p_singlet[edge2]
+          
+          if (runif(1) < p_singlet1 && runif(1) < p_singlet2) {
+            if (!are.connected(g, V(g)$label[neighbors_v[i]], V(g)$label[neighbors_v[j]])) {
+              new_edge_lambda <- max(E(g)$lambda[edge1], E(g)$lambda[edge2])
+              new_edge_p_singlet <- pmin(1, 2 * (1 - new_edge_lambda))
+              g <- add_edges(g, c(V(g)$label[neighbors_v[i]], V(g)$label[neighbors_v[j]]), attr = list(lambda = new_edge_lambda, p_singlet = new_edge_p_singlet))
+            }
+            g <- delete_edges(g, c(edge1, edge2))
+            swapped <- TRUE
+            break
+          }
+        }
+        if (swapped) break
+      }
+      
+      neighbors_v <- neighbors(g, v)
+      if (!swapped) break
+    }
+  }
+  
+  return(g)
+}
+
+# Parametri
+N <- 100
+p_values <- seq(0.001, 0.3, by = 0.001)
+
+# Dati per il metodo con entanglement swapping
+data_swapping <- data.frame(p = numeric(), giant_component_size = numeric())
+
+for (p in p_values) {
+  g <- generate_network(N, p)
+  g <- entanglement_swapping(g)
+  giant_component_size <- calculate_giant_component(g)
+  data_swapping <- rbind(data_swapping, data.frame(p = p, giant_component_size = giant_component_size / N))
+}
+
+# Metodo classico di percolazione
+data_classical <- data.frame(p = numeric(), giant_component_size = numeric())
+
+for (p in p_values) {
+  g <- erdos.renyi.game(N, p, type = "gnp")
+  giant_component_size <- calculate_giant_component(g)
+  data_classical <- rbind(data_classical, data.frame(p = p, giant_component_size = giant_component_size / N))
+}
+
+# Plot dei risultati
+ggplot() +
+  geom_line(data = data_swapping, aes(x = p, y = giant_component_size), color = "blue") +
+  geom_line(data = data_classical, aes(x = p, y = giant_component_size), color = "red", linetype = "dashed") +
+  labs(title = "Giant Component Size: Quantum Percolation vs Classical Percolation",
+       x = "Probability of Connection (p)",
+       y = "Giant Component Size (fraction of total nodes)") +
+  theme_minimal() +
+  scale_color_manual(values = c("blue", "red"), labels = c("Quantum Percolation", "Classical Percolation"))
+
+```
+
+```{r}
+library(igraph)
+library(ggplot2)
+
+# Funzione per generare una rete di Erdős-Rényi con stati parzialmente entangled
+generate_network <- function(N, p) {
+  g <- erdos.renyi.game(N, p, type = "gnp")
+  E(g)$lambda0 <- runif(ecount(g), 0.5, 1.0)  # Parametro lambda0
+  E(g)$p_singlet <- pmin(1, 2 * (1 - E(g)$lambda0))  # Probabilità di conversione a singoletto
+  return(g)
+}
+
+# Funzione generatrice della distribuzione di grado
+G0 <- function(x, degree_dist) {
+  return(sum(degree_dist * x^(0:(length(degree_dist) - 1))))
+}
+
+# Funzione generatrice della distribuzione di grado meno uno
+G1 <- function(x, degree_dist) {
+  k <- 0:(length(degree_dist) - 1)
+  return(sum(k * degree_dist * x^(k - 1)) / sum(k * degree_dist))
+}
+
+# Funzione per calcolare la probabilità critica usando la funzione generatrice
+critical_probability <- function(degree_dist) {
+  p_values <- seq(0, 1, length.out = 1000)
+  
+  for (p in p_values) {
+    H1 <- function(x) {
+      (1 - p^2) + p^2 * x * G1(H1(x), degree_dist)
+    }
+    
+    u <- 1
+    iterations <- 0
+    
+    while (u > 0.0001 && iterations < 1000) {
+      u <- H1(1)
+      iterations <- iterations + 1
+    }
+    
+    if (u < 1) {
+      return(p)
+    }
+  }
+  
+  return(NA)  # Ritorna NA se nessuna soluzione è trovata
+}
+
+# Funzione per calcolare la dimensione del componente gigante
+calculate_giant_component <- function(g) {
+  clusters_info <- clusters(g)
+  giant_component_size <- max(clusters_info$csize)
+  return(giant_component_size)
+}
+
+# Funzione per lo swapping di entanglement
+entanglement_swapping <- function(g) {
+  V(g)$label <- 1:vcount(g)
+  
+  for (v in V(g)) {
+    neighbors_v <- neighbors(g, v)
+    
+    while (length(neighbors_v) >= 2) {
+      swapped <- FALSE
+      
+      for (i in 1:(length(neighbors_v) - 1)) {
+        for (j in (i + 1):length(neighbors_v)) {
+          edge1 <- get.edge.ids(g, c(V(g)$label[v], V(g)$label[neighbors_v[i]]))
+          edge2 <- get.edge.ids(g, c(V(g)$label[v], V(g)$label[neighbors_v[j]]))
+          
+          if (length(edge1) == 0 || length(edge2) == 0) next
+          
+          p_singlet1 <- E(g)$p_singlet[edge1]
+          p_singlet2 <- E(g)$p_singlet[edge2]
+          
+          # Entanglement swapping avviene solo se entrambi gli stati possono essere convertiti in singoletti
+          if (runif(1) < p_singlet1 && runif(1) < p_singlet2) {
+            if (!are.connected(g, V(g)$label[neighbors_v[i]], V(g)$label[neighbors_v[j]])) {
+              new_edge_lambda0 <- max(E(g)$lambda0[edge1], E(g)$lambda0[edge2])
+              new_edge_p_singlet <- pmin(1, 2 * (1 - new_edge_lambda0))
+              g <- add_edges(g, c(V(g)$label[neighbors_v[i]], V(g)$label[neighbors_v[j]]), attr = list(lambda0 = new_edge_lambda0, p_singlet = new_edge_p_singlet))
+            }
+            g <- delete_edges(g, c(edge1, edge2))
+            swapped <- TRUE
+            break
+          }
+        }
+        if (swapped) break
+      }
+      
+      neighbors_v <- neighbors(g, v)
+      if (!swapped) break
+    }
+  }
+  
+  return(g)
+}
+
+# Parametri
+N <- 1000
+mean_degree <- 4
+degree_dist <- dpois(0:N, lambda = mean_degree)
+p_critical <- critical_probability(degree_dist)
+p_values <- seq(0.001, 0.5, by = 0.001)
+
+# Dati per il metodo con entanglement swapping
+data_swapping <- data.frame(p = numeric(), giant_component_size = numeric())
+
+for (p in p_values) {
+  g <- generate_network(N, p)
+  g <- entanglement_swapping(g)
+  giant_component_size <- calculate_giant_component(g)
+  data_swapping <- rbind(data_swapping, data.frame(p = p, giant_component_size = giant_component_size / N))
+}
+
+# Metodo classico di percolazione
+data_classical <- data.frame(p = numeric(), giant_component_size = numeric())
+
+for (p in p_values) {
+  g <- erdos.renyi.game(N, p, type = "gnp")
+  giant_component_size <- calculate_giant_component(g)
+  data_classical <- rbind(data_classical, data.frame(p = p, giant_component_size = giant_component_size / N))
+}
+
+# Plot dei risultati
+ggplot() +
+  geom_line(data = data_swapping, aes(x = p, y = giant_component_size), color = "blue") +
+  geom_line(data = data_classical, aes(x = p, y = giant_component_size), color = "red", linetype = "dashed") +
+  labs(title = "Giant Component Size: Quantum Percolation vs Classical Percolation",
+       x = "Probability of Connection (p)",
+       y = "Giant Component Size (fraction of total nodes)") +
+  theme_minimal() +
+  scale_color_manual(values = c("blue", "red"), labels = c("Quantum Percolation", "Classical Percolation"))
+
+```
+
+```{r}
+library(igraph)
+library(ggplot2)
+
+# Funzione per generare una rete di Erdős-Rényi con stati entangled parzialmente normalizzati
+generate_network <- function(N, p) {
+  g <- erdos.renyi.game(N, p, type = "gnp")
+  E(g)$lambda1 <- runif(ecount(g), sqrt(0.5), 1.0)  # Parametro lambda1 tra sqrt(0.5) e 1.0
+  E(g)$lambda2 <- sqrt(1 - E(g)$lambda1^2)  # Calcola lambda2 per soddisfare la normalizzazione
+  E(g)$p_singlet <- pmin(1, 2 * (1 - E(g)$lambda1))  # Probabilità di conversione a singoletto
+  return(g)
+}
+
+# Funzione per calcolare la dimensione del componente gigante
+calculate_giant_component <- function(g) {
+  clusters_info <- clusters(g)
+  giant_component_size <- max(clusters_info$csize)
+  return(giant_component_size)
+}
+
+# Funzione per lo swapping di entanglement
+entanglement_swapping <- function(g) {
+  V(g)$label <- 1:vcount(g)
+  
+  for (v in V(g)) {
+    neighbors_v <- neighbors(g, v)
+    
+    while (length(neighbors_v) >= 2) {
+      swapped <- FALSE
+      
+      for (i in 1:(length(neighbors_v) - 1)) {
+        for (j in (i + 1):length(neighbors_v)) {
+          edge1 <- get.edge.ids(g, c(V(g)$label[v], V(g)$label[neighbors_v[i]]))
+          edge2 <- get.edge.ids(g, c(V(g)$label[v], V(g)$label[neighbors_v[j]]))
+          
+          if (length(edge1) == 0 || length(edge2) == 0) next
+          
+          p_singlet1 <- E(g)$p_singlet[edge1]
+          p_singlet2 <- E(g)$p_singlet[edge2]
+          
+          # Entanglement swapping avviene solo se entrambi gli stati possono essere convertiti in singoletti
+          if (runif(1) < p_singlet1 && runif(1) < p_singlet2) {
+            if (!are.connected(g, V(g)$label[neighbors_v[i]], V(g)$label[neighbors_v[j]])) {
+              new_edge_lambda1 <- max(E(g)$lambda1[edge1], E(g)$lambda1[edge2])
+              new_edge_lambda2 <- sqrt(1 - new_edge_lambda1^2)
+              new_edge_p_singlet <- pmin(1, 2 * (1 - new_edge_lambda1))
+              g <- add_edges(g, c(V(g)$label[neighbors_v[i]], V(g)$label[neighbors_v[j]]), attr = list(lambda1 = new_edge_lambda1, lambda2 = new_edge_lambda2, p_singlet = new_edge_p_singlet))
+            }
+            g <- delete_edges(g, c(edge1, edge2))
+            swapped <- TRUE
+            break
+          }
+        }
+        if (swapped) break
+      }
+      
+      neighbors_v <- neighbors(g, v)
+      if (!swapped) break
+    }
+  }
+  
+  return(g)
+}
+
+# Simulazione della percolazione
+N <- 100
+p_values <- seq(0.001, 0.2, by = 0.001)
+data_swapping <- data.frame(p = numeric(), giant_component_size = numeric())
+data_classical <- data.frame(p = numeric(), giant_component_size = numeric())
+
+for (p in p_values) {
+  g <- generate_network(N, p)
+  g <- entanglement_swapping(g)
+  giant_component_size <- calculate_giant_component(g)
+  data_swapping <- rbind(data_swapping, data.frame(p = p, giant_component_size = giant_component_size / N))
+  
+  g <- erdos.renyi.game(N, p, type = "gnp")
+  giant_component_size <- calculate_giant_component(g)
+  data_classical <- rbind(data_classical, data.frame(p = p, giant_component_size = giant_component_size / N))
+}
+
+# Plot dei risultati
+ggplot() +
+  geom_line(data = data_swapping, aes(x = p, y = giant_component_size), color = "blue") +
+  geom_line(data = data_classical, aes(x = p, y = giant_component_size), color = "red", linetype = "dashed") +
+  labs(title = "Giant Component Size: Quantum Percolation vs Classical Percolation",
+       x = "Probability of Connection (p)",
+       y = "Giant Component Size (fraction of total nodes)") +
+  theme_minimal()
+
+```
